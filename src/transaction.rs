@@ -11,3 +11,13 @@ pub(crate) struct Input {
     /// Sequence number of transaction
     sequence: u32,
 }
+
+/// Transaction output
+pub(crate) struct Output {
+    /// Value of output in "satoshis"
+    amount: u64,
+    /// Size of variable-sized public key script
+    pub_key_script_size: u32,
+    /// Locking script
+    pub_key_script: Vec<u8>,
+}
