@@ -49,3 +49,32 @@ impl Output {
     /// compile-time known for every instance of [`Output`]
     const SCRIPT_PUB_KEY_SIZE: u8 = SHA256_OUT_SIZE;
 }
+
+impl Output {
+    fn serialise(&self) -> Vec<u8> {
+        let mut data = vec![0; u64::BITS as usize / 8 + SHA256_OUT_SIZE as usize];
+        data[..u64::BITS as usize / 8].copy_from_slice(&self.amount.to_le_bytes());
+        data[u64::BITS as usize / 8..].copy_from_slice(&self.script_pub_key);
+        data
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Output;
+
+    #[test]
+    fn serialise_output() {
+        let amount = 123;
+        let mut script_pub_key = (0..32).collect::<Vec<_>>();
+        let output = Output {
+            amount,
+            script_pub_key: script_pub_key.clone(),
+        };
+        let mut expected_serialised_data = Vec::new();
+        expected_serialised_data.append(&mut amount.to_le_bytes().to_vec());
+        expected_serialised_data.append(&mut script_pub_key);
+        let serialised_data = output.serialise();
+        assert_eq!(serialised_data, expected_serialised_data);
+    }
+}
