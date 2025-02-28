@@ -1,5 +1,6 @@
 const SHA256_OUT_SIZE: u8 = 32;
 const ECDSA_SIG_SIZE: u8 = 64;
+const TRANSACTION_ID_SIZE: u8 = 32;
 
 /// Transaction input
 ///
@@ -27,6 +28,31 @@ impl Input {
     /// Note: Assuming `P2PKH` script pattern and ECDSA signature means that the length is always
     /// the same and is thus compile-time known for every instance of [`Input`]
     const SCRIPT_SIG_SIZE: u8 = SHA256_OUT_SIZE + ECDSA_SIG_SIZE;
+}
+
+impl Input {
+    fn serialise(&self) -> Vec<u8> {
+        let mut data = vec![
+            0;
+            TRANSACTION_ID_SIZE as usize
+                + u32::BITS as usize / 8
+                + Input::SCRIPT_SIG_SIZE as usize
+                + u32::BITS as usize / 8
+        ];
+        data[..TRANSACTION_ID_SIZE as usize].copy_from_slice(&self.transaction_id);
+        data[TRANSACTION_ID_SIZE as usize..TRANSACTION_ID_SIZE as usize + u32::BITS as usize / 8]
+            .copy_from_slice(&self.output_index.to_le_bytes());
+        data[TRANSACTION_ID_SIZE as usize + u32::BITS as usize / 8
+            ..TRANSACTION_ID_SIZE as usize
+                + u32::BITS as usize / 8
+                + Input::SCRIPT_SIG_SIZE as usize]
+            .copy_from_slice(&self.script_sig);
+        data[TRANSACTION_ID_SIZE as usize
+            + u32::BITS as usize / 8
+            + Input::SCRIPT_SIG_SIZE as usize..]
+            .copy_from_slice(&self.sequence.to_le_bytes());
+        data
+    }
 }
 
 /// Transaction output
@@ -61,7 +87,7 @@ impl Output {
 
 #[cfg(test)]
 mod tests {
-    use super::Output;
+    use super::{Input, Output};
 
     #[test]
     fn serialise_output() {
@@ -75,6 +101,27 @@ mod tests {
         expected_serialised_data.append(&mut amount.to_le_bytes().to_vec());
         expected_serialised_data.append(&mut script_pub_key);
         let serialised_data = output.serialise();
+        assert_eq!(serialised_data, expected_serialised_data);
+    }
+
+    #[test]
+    fn serialise_input() {
+        let mut transaction_id = (0..32).collect::<Vec<_>>();
+        let output_index = 1;
+        let mut script_sig = (0..96).collect::<Vec<_>>();
+        let sequence = 0xFDFFFFFF;
+        let input = Input {
+            transaction_id: transaction_id.clone(),
+            output_index,
+            script_sig: script_sig.clone(),
+            sequence,
+        };
+        let mut expected_serialised_data = Vec::new();
+        expected_serialised_data.append(&mut transaction_id);
+        expected_serialised_data.append(&mut output_index.to_le_bytes().to_vec());
+        expected_serialised_data.append(&mut script_sig);
+        expected_serialised_data.append(&mut sequence.to_le_bytes().to_vec());
+        let serialised_data = input.serialise();
         assert_eq!(serialised_data, expected_serialised_data);
     }
 }
