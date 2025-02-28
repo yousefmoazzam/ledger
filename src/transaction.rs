@@ -1,12 +1,6 @@
 const SHA256_OUT_SIZE: u8 = 32;
 const ECDSA_SIG_SIZE: u8 = 64;
 
-/// Locking performed by "pay to public key hash" script pattern
-struct P2PKHLock {
-    /// Public key of transaction recipient
-    public_key: Vec<u8>,
-}
-
 /// Transaction input
 ///
 /// Note: Assume the use of "pay to public key hash" (P2PKH) script pattern and uncompressed ECDSA
@@ -36,9 +30,22 @@ impl Input {
 }
 
 /// Transaction output
+///
+/// Note: Assume the use of "pay to public key hash" (P2PKH) script pattern
 pub(crate) struct Output {
     /// Value of output in "satoshis"
     amount: u64,
     /// Data to be provided to unlock transaction
-    lock_mechanism: P2PKHLock,
+    ///
+    /// Note: From P2PKH assumption, this contains just the SHA256 hash of the public key of the
+    /// recipient
+    script_pub_key: Vec<u8>,
+}
+
+impl Output {
+    /// Size of `script_pub_key` field
+    ///
+    /// Note: Assuming `P2PKH` script pattern means that the length is always the same and is thus
+    /// compile-time known for every instance of [`Output`]
+    const SCRIPT_PUB_KEY_SIZE: u8 = SHA256_OUT_SIZE;
 }
