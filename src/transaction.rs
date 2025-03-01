@@ -36,20 +36,16 @@ impl Input {
             0;
             TRANSACTION_ID_SIZE as usize
                 + u32::BITS as usize / 8
-                + Input::SCRIPT_SIG_SIZE as usize
+                + self.script_sig.len()
                 + u32::BITS as usize / 8
         ];
         data[..TRANSACTION_ID_SIZE as usize].copy_from_slice(&self.transaction_id);
         data[TRANSACTION_ID_SIZE as usize..TRANSACTION_ID_SIZE as usize + u32::BITS as usize / 8]
             .copy_from_slice(&self.output_index.to_le_bytes());
         data[TRANSACTION_ID_SIZE as usize + u32::BITS as usize / 8
-            ..TRANSACTION_ID_SIZE as usize
-                + u32::BITS as usize / 8
-                + Input::SCRIPT_SIG_SIZE as usize]
+            ..TRANSACTION_ID_SIZE as usize + u32::BITS as usize / 8 + self.script_sig.len()]
             .copy_from_slice(&self.script_sig);
-        data[TRANSACTION_ID_SIZE as usize
-            + u32::BITS as usize / 8
-            + Input::SCRIPT_SIG_SIZE as usize..]
+        data[TRANSACTION_ID_SIZE as usize + u32::BITS as usize / 8 + self.script_sig.len()..]
             .copy_from_slice(&self.sequence.to_le_bytes());
         data
     }
@@ -142,6 +138,27 @@ mod tests {
         expected_serialised_data.append(&mut transaction_id);
         expected_serialised_data.append(&mut output_index.to_le_bytes().to_vec());
         expected_serialised_data.append(&mut script_sig);
+        expected_serialised_data.append(&mut sequence.to_le_bytes().to_vec());
+        let serialised_data = input.serialise();
+        assert_eq!(serialised_data, expected_serialised_data);
+    }
+
+    #[test]
+    fn serialise_input_with_placeholder_script_sig() {
+        let mut transaction_id = (0..32).collect::<Vec<_>>();
+        let output_index = 1;
+        let mut placeholder_script_sig = (2..34).collect::<Vec<_>>();
+        let sequence = 0xFDFFFFFF;
+        let input = Input {
+            transaction_id: transaction_id.clone(),
+            output_index,
+            script_sig: placeholder_script_sig.clone(),
+            sequence,
+        };
+        let mut expected_serialised_data = Vec::new();
+        expected_serialised_data.append(&mut transaction_id);
+        expected_serialised_data.append(&mut output_index.to_le_bytes().to_vec());
+        expected_serialised_data.append(&mut placeholder_script_sig);
         expected_serialised_data.append(&mut sequence.to_le_bytes().to_vec());
         let serialised_data = input.serialise();
         assert_eq!(serialised_data, expected_serialised_data);
