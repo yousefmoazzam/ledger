@@ -98,6 +98,13 @@ impl SigHashType {
             SigHashType::All => u32::to_le_bytes(1),
         }
     }
+
+    /// Serialise sig hash type for appending to signature data (1 byte)
+    fn serialise_for_signature(&self) -> u8 {
+        match self {
+            SigHashType::All => 1,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -145,6 +152,15 @@ mod tests {
         let expected_serialised_data = u32::to_le_bytes(1);
         assert_eq!(
             SigHashType::All.serialise_for_transaction(),
+            expected_serialised_data
+        );
+    }
+
+    #[test]
+    fn serialise_sig_hash_all_type_for_signature_data() {
+        let expected_serialised_data = 1;
+        assert_eq!(
+            SigHashType::All.serialise_for_signature(),
             expected_serialised_data
         );
     }
