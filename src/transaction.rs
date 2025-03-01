@@ -85,9 +85,24 @@ impl Output {
     }
 }
 
+/// Signifies which parts of a transaction have been signed
+pub(crate) enum SigHashType {
+    /// All inputs and all outputs
+    All,
+}
+
+impl SigHashType {
+    /// Serialise sig hash type for appending to transaction data (4 bytes, in litte-endian order)
+    fn serialise_for_transaction(&self) -> [u8; 4] {
+        match self {
+            SigHashType::All => u32::to_le_bytes(1),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Input, Output};
+    use super::{Input, Output, SigHashType};
 
     #[test]
     fn serialise_output() {
@@ -123,5 +138,14 @@ mod tests {
         expected_serialised_data.append(&mut sequence.to_le_bytes().to_vec());
         let serialised_data = input.serialise();
         assert_eq!(serialised_data, expected_serialised_data);
+    }
+
+    #[test]
+    fn serialise_sig_hash_all_type_for_transaction_data() {
+        let expected_serialised_data = u32::to_le_bytes(1);
+        assert_eq!(
+            SigHashType::All.serialise_for_transaction(),
+            expected_serialised_data
+        );
     }
 }
