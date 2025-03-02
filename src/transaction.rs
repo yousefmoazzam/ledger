@@ -170,11 +170,12 @@ impl Transaction {
 
     /// Serialise signed transaction data
     fn serialise(&self) -> Vec<u8> {
+        let serialised_inputs_size = SERIALISED_INPUT_SIZE as usize * self.inputs.len();
         let mut data = vec![
             0;
             U32_SIZE
                 + 1
-                + SERIALISED_INPUT_SIZE as usize * self.inputs.len()
+                + serialised_inputs_size
                 + 1
                 + U64_SIZE
                 + SHA256_OUT_SIZE as usize
@@ -193,21 +194,12 @@ impl Transaction {
                 .copy_from_slice(&serialised_signed_input);
         }
 
-        data[U32_SIZE + 1 + SERIALISED_INPUT_SIZE as usize * self.inputs.len()] =
-            self.outputs.len() as u8;
+        data[U32_SIZE + 1 + serialised_inputs_size] = self.outputs.len() as u8;
         let serialised_output = self.outputs[0].serialise();
-        data[U32_SIZE + 1 + SERIALISED_INPUT_SIZE as usize * self.inputs.len() + 1
-            ..U32_SIZE
-                + 1
-                + SERIALISED_INPUT_SIZE as usize * self.inputs.len()
-                + 1
-                + serialised_output.len()]
+        data[U32_SIZE + 1 + serialised_inputs_size + 1
+            ..U32_SIZE + 1 + serialised_inputs_size + 1 + serialised_output.len()]
             .copy_from_slice(&serialised_output);
-        data[U32_SIZE
-            + 1
-            + SERIALISED_INPUT_SIZE as usize * self.inputs.len()
-            + 1
-            + serialised_output.len()..]
+        data[U32_SIZE + 1 + serialised_inputs_size + 1 + serialised_output.len()..]
             .copy_from_slice(&u32::to_le_bytes(self.locktime));
         data
     }
