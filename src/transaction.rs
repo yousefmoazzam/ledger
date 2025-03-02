@@ -3,6 +3,7 @@ const ECDSA_SIG_SIZE: u8 = 64;
 const TRANSACTION_ID_SIZE: u8 = 32;
 const SERIALISED_INPUT_SIZE: u8 =
     TRANSACTION_ID_SIZE + 4 + SHA256_OUT_SIZE + ECDSA_SIG_SIZE + 1 + 4;
+const U32_SIZE: usize = u32::BITS as usize / 8;
 
 /// Transaction input
 ///
@@ -35,20 +36,15 @@ impl Input {
 
 impl Input {
     fn serialise(&self) -> Vec<u8> {
-        let mut data = vec![
-            0;
-            TRANSACTION_ID_SIZE as usize
-                + u32::BITS as usize / 8
-                + self.script_sig.len()
-                + u32::BITS as usize / 8
-        ];
+        let mut data =
+            vec![0; TRANSACTION_ID_SIZE as usize + U32_SIZE + self.script_sig.len() + U32_SIZE];
         data[..TRANSACTION_ID_SIZE as usize].copy_from_slice(&self.transaction_id);
-        data[TRANSACTION_ID_SIZE as usize..TRANSACTION_ID_SIZE as usize + u32::BITS as usize / 8]
+        data[TRANSACTION_ID_SIZE as usize..TRANSACTION_ID_SIZE as usize + U32_SIZE]
             .copy_from_slice(&self.output_index.to_le_bytes());
-        data[TRANSACTION_ID_SIZE as usize + u32::BITS as usize / 8
-            ..TRANSACTION_ID_SIZE as usize + u32::BITS as usize / 8 + self.script_sig.len()]
+        data[TRANSACTION_ID_SIZE as usize + U32_SIZE
+            ..TRANSACTION_ID_SIZE as usize + U32_SIZE + self.script_sig.len()]
             .copy_from_slice(&self.script_sig);
-        data[TRANSACTION_ID_SIZE as usize + u32::BITS as usize / 8 + self.script_sig.len()..]
+        data[TRANSACTION_ID_SIZE as usize + U32_SIZE + self.script_sig.len()..]
             .copy_from_slice(&self.sequence.to_le_bytes());
         data
     }
@@ -175,38 +171,38 @@ impl Transaction {
     fn serialise(&self) -> Vec<u8> {
         let mut data = vec![
             0;
-            u32::BITS as usize / 8
+            U32_SIZE
                 + 1
                 + SERIALISED_INPUT_SIZE as usize * self.inputs.len()
                 + 1
                 + u64::BITS as usize / 8
                 + SHA256_OUT_SIZE as usize
-                + u32::BITS as usize / 8
+                + U32_SIZE
         ];
-        data[..u32::BITS as usize / 8].copy_from_slice(&self.version.to_le_bytes());
-        data[u32::BITS as usize / 8] = self.inputs.len() as u8;
+        data[..U32_SIZE].copy_from_slice(&self.version.to_le_bytes());
+        data[U32_SIZE] = self.inputs.len() as u8;
 
         for (idx, input) in self.inputs.iter().enumerate() {
             let serialised_signed_input = input.serialise();
-            data[u32::BITS as usize / 8 + 1 + idx * SERIALISED_INPUT_SIZE as usize
-                ..u32::BITS as usize / 8
+            data[U32_SIZE + 1 + idx * SERIALISED_INPUT_SIZE as usize
+                ..U32_SIZE
                     + 1
                     + idx * SERIALISED_INPUT_SIZE as usize
                     + serialised_signed_input.len()]
                 .copy_from_slice(&serialised_signed_input);
         }
 
-        data[u32::BITS as usize / 8 + 1 + SERIALISED_INPUT_SIZE as usize * self.inputs.len()] =
+        data[U32_SIZE + 1 + SERIALISED_INPUT_SIZE as usize * self.inputs.len()] =
             self.outputs.len() as u8;
         let serialised_output = self.outputs[0].serialise();
-        data[u32::BITS as usize / 8 + 1 + SERIALISED_INPUT_SIZE as usize * self.inputs.len() + 1
-            ..u32::BITS as usize / 8
+        data[U32_SIZE + 1 + SERIALISED_INPUT_SIZE as usize * self.inputs.len() + 1
+            ..U32_SIZE
                 + 1
                 + SERIALISED_INPUT_SIZE as usize * self.inputs.len()
                 + 1
                 + serialised_output.len()]
             .copy_from_slice(&serialised_output);
-        data[u32::BITS as usize / 8
+        data[U32_SIZE
             + 1
             + SERIALISED_INPUT_SIZE as usize * self.inputs.len()
             + 1
@@ -218,7 +214,9 @@ impl Transaction {
 
 #[cfg(test)]
 mod tests {
-    use super::{Input, Output, SigHashType, Transaction, ECDSA_SIG_SIZE, SHA256_OUT_SIZE};
+    use super::{
+        Input, Output, SigHashType, Transaction, ECDSA_SIG_SIZE, SHA256_OUT_SIZE, U32_SIZE,
+    };
     use ring::{
         rand,
         signature::{self, KeyPair, ECDSA_P256_SHA256_FIXED, ECDSA_P256_SHA256_FIXED_SIGNING},
@@ -378,40 +376,31 @@ mod tests {
         inputs[0].script_sig = script_sig.to_vec();
 
         // Form expected serialised transaction data with signed input
-        let mut expected_serialised_data = [0; u32::BITS as usize / 8
+        let mut expected_serialised_data = [0; U32_SIZE
             + 1
             + SHA256_OUT_SIZE as usize
-            + u32::BITS as usize / 8
+            + U32_SIZE
             + SHA256_OUT_SIZE as usize
             + ECDSA_SIG_SIZE as usize
             + 1
-            + u32::BITS as usize / 8
+            + U32_SIZE
             + 1
             + u64::BITS as usize / 8
             + SHA256_OUT_SIZE as usize
-            + u32::BITS as usize / 8];
-        expected_serialised_data[..u32::BITS as usize / 8]
-            .copy_from_slice(&transaction.version.to_le_bytes());
-        expected_serialised_data[u32::BITS as usize / 8] = inputs.len() as u8;
+            + U32_SIZE];
+        expected_serialised_data[..U32_SIZE].copy_from_slice(&transaction.version.to_le_bytes());
+        expected_serialised_data[U32_SIZE] = inputs.len() as u8;
         let serialised_signed_input = inputs[0].serialise();
-        expected_serialised_data[u32::BITS as usize / 8 + 1
-            ..u32::BITS as usize / 8 + 1 + serialised_signed_input.len()]
+        expected_serialised_data[U32_SIZE + 1..U32_SIZE + 1 + serialised_signed_input.len()]
             .copy_from_slice(&serialised_signed_input);
-        expected_serialised_data[u32::BITS as usize / 8 + 1 + serialised_signed_input.len()] =
+        expected_serialised_data[U32_SIZE + 1 + serialised_signed_input.len()] =
             outputs.len() as u8;
         let serialised_output = outputs[0].serialise();
-        expected_serialised_data[u32::BITS as usize / 8 + 1 + serialised_signed_input.len() + 1
-            ..u32::BITS as usize / 8
-                + 1
-                + serialised_signed_input.len()
-                + 1
-                + serialised_output.len()]
+        expected_serialised_data[U32_SIZE + 1 + serialised_signed_input.len() + 1
+            ..U32_SIZE + 1 + serialised_signed_input.len() + 1 + serialised_output.len()]
             .copy_from_slice(&serialised_output);
-        expected_serialised_data[u32::BITS as usize / 8
-            + 1
-            + serialised_signed_input.len()
-            + 1
-            + serialised_output.len()..]
+        expected_serialised_data
+            [U32_SIZE + 1 + serialised_signed_input.len() + 1 + serialised_output.len()..]
             .copy_from_slice(&u32::to_le_bytes(locktime));
 
         // NOTE: For now, assume that the transaction signing method is provided the script pub key
@@ -445,43 +434,37 @@ mod tests {
         // Assert equality of the parts of `signed_transaction_data` and `expected_serialised_data`
         // that aren't the signature
         assert_eq!(
-            signed_transaction_data[..u32::BITS as usize / 8
-                + 1
-                + SHA256_OUT_SIZE as usize
-                + u32::BITS as usize / 8
-                + SHA256_OUT_SIZE as usize],
-            expected_serialised_data[..u32::BITS as usize / 8
-                + 1
-                + SHA256_OUT_SIZE as usize
-                + u32::BITS as usize / 8
-                + SHA256_OUT_SIZE as usize]
+            signed_transaction_data
+                [..U32_SIZE + 1 + SHA256_OUT_SIZE as usize + U32_SIZE + SHA256_OUT_SIZE as usize],
+            expected_serialised_data
+                [..U32_SIZE + 1 + SHA256_OUT_SIZE as usize + U32_SIZE + SHA256_OUT_SIZE as usize]
         );
         assert_eq!(
-            signed_transaction_data[u32::BITS as usize / 8
+            signed_transaction_data[U32_SIZE
                 + 1
                 + SHA256_OUT_SIZE as usize
-                + u32::BITS as usize / 8
+                + U32_SIZE
                 + SHA256_OUT_SIZE as usize
                 + ECDSA_SIG_SIZE as usize..],
-            expected_serialised_data[u32::BITS as usize / 8
+            expected_serialised_data[U32_SIZE
                 + 1
                 + SHA256_OUT_SIZE as usize
-                + u32::BITS as usize / 8
+                + U32_SIZE
                 + SHA256_OUT_SIZE as usize
                 + ECDSA_SIG_SIZE as usize..]
         );
 
         // Check that the signature portion of `signed_transaction_data` is successfully verified
         // with the public key that was used to sign the transaction data
-        let sig_in_serialised_transaction = &signed_transaction_data[u32::BITS as usize / 8
+        let sig_in_serialised_transaction = &signed_transaction_data[U32_SIZE
             + 1
             + SHA256_OUT_SIZE as usize
-            + u32::BITS as usize / 8
+            + U32_SIZE
             + SHA256_OUT_SIZE as usize
-            ..u32::BITS as usize / 8
+            ..U32_SIZE
                 + 1
                 + SHA256_OUT_SIZE as usize
-                + u32::BITS as usize / 8
+                + U32_SIZE
                 + SHA256_OUT_SIZE as usize
                 + ECDSA_SIG_SIZE as usize];
         let pub_key = signature::UnparsedPublicKey::new(
@@ -620,56 +603,51 @@ mod tests {
         inputs[1].script_sig = input_two_script_sig.to_vec();
 
         // Form expected serialised transaction data with both signed inputs
-        let mut expected_serialised_data = [0; u32::BITS as usize / 8
+        let mut expected_serialised_data = [0; U32_SIZE
             + 1                         // start of inputs
             + SHA256_OUT_SIZE as usize  // start of input one
-            + u32::BITS as usize / 8
+            + U32_SIZE
             + SHA256_OUT_SIZE as usize  // start of input one sig
             + ECDSA_SIG_SIZE as usize
             + 1
-            + u32::BITS as usize / 8
+            + U32_SIZE
             + SHA256_OUT_SIZE as usize  // start of input two
-            + u32::BITS as usize / 8
+            + U32_SIZE
             + SHA256_OUT_SIZE as usize  // start of input two sig
             + ECDSA_SIG_SIZE as usize
             + 1
-            + u32::BITS as usize / 8
+            + U32_SIZE
             + 1                         // start of outputs
             + u64::BITS as usize / 8
             + SHA256_OUT_SIZE as usize
-            + u32::BITS as usize / 8];
-        expected_serialised_data[..u32::BITS as usize / 8]
-            .copy_from_slice(&transaction.version.to_le_bytes());
-        expected_serialised_data[u32::BITS as usize / 8] = inputs.len() as u8;
+            + U32_SIZE];
+        expected_serialised_data[..U32_SIZE].copy_from_slice(&transaction.version.to_le_bytes());
+        expected_serialised_data[U32_SIZE] = inputs.len() as u8;
         let serialised_signed_input_one = inputs[0].serialise();
-        expected_serialised_data[u32::BITS as usize / 8 + 1
-            ..u32::BITS as usize / 8 + 1 + serialised_signed_input_one.len()]
+        expected_serialised_data[U32_SIZE + 1..U32_SIZE + 1 + serialised_signed_input_one.len()]
             .copy_from_slice(&serialised_signed_input_one);
         let serialised_signed_input_two = inputs[1].serialise();
-        expected_serialised_data[u32::BITS as usize / 8 + 1 + serialised_signed_input_one.len()
-            ..u32::BITS as usize / 8
-                + 1
-                + serialised_signed_input_one.len()
-                + serialised_signed_input_two.len()]
+        expected_serialised_data[U32_SIZE + 1 + serialised_signed_input_one.len()
+            ..U32_SIZE + 1 + serialised_signed_input_one.len() + serialised_signed_input_two.len()]
             .copy_from_slice(&serialised_signed_input_two);
-        expected_serialised_data[u32::BITS as usize / 8
+        expected_serialised_data[U32_SIZE
             + 1
             + serialised_signed_input_one.len()
             + serialised_signed_input_two.len()] = outputs.len() as u8;
         let serialised_output = outputs[0].serialise();
-        expected_serialised_data[u32::BITS as usize / 8
+        expected_serialised_data[U32_SIZE
             + 1
             + serialised_signed_input_one.len()
             + serialised_signed_input_two.len()
             + 1
-            ..u32::BITS as usize / 8
+            ..U32_SIZE
                 + 1
                 + serialised_signed_input_one.len()
                 + serialised_signed_input_two.len()
                 + 1
                 + serialised_output.len()]
             .copy_from_slice(&serialised_output);
-        expected_serialised_data[u32::BITS as usize / 8
+        expected_serialised_data[U32_SIZE
             + 1
             + serialised_signed_input_one.len()
             + serialised_signed_input_two.len()
@@ -700,76 +678,70 @@ mod tests {
 
         // Portion before the first input signature
         assert_eq!(
-            signed_transaction_data[..u32::BITS as usize / 8
-                + 1
-                + SHA256_OUT_SIZE as usize
-                + u32::BITS as usize / 8
-                + SHA256_OUT_SIZE as usize],
-            expected_serialised_data[..u32::BITS as usize / 8
-                + 1
-                + SHA256_OUT_SIZE as usize
-                + u32::BITS as usize / 8
-                + SHA256_OUT_SIZE as usize]
+            signed_transaction_data
+                [..U32_SIZE + 1 + SHA256_OUT_SIZE as usize + U32_SIZE + SHA256_OUT_SIZE as usize],
+            expected_serialised_data
+                [..U32_SIZE + 1 + SHA256_OUT_SIZE as usize + U32_SIZE + SHA256_OUT_SIZE as usize]
         );
         // Portion after the first input signature but before the second input signature
         assert_eq!(
-            signed_transaction_data[u32::BITS as usize / 8
+            signed_transaction_data[U32_SIZE
                 + 1
                 + SHA256_OUT_SIZE as usize
-                + u32::BITS as usize / 8
+                + U32_SIZE
                 + SHA256_OUT_SIZE as usize
                 + ECDSA_SIG_SIZE as usize
-                ..u32::BITS as usize / 8
+                ..U32_SIZE
                     + 1
                     + SHA256_OUT_SIZE as usize
-                    + u32::BITS as usize / 8
+                    + U32_SIZE
                     + SHA256_OUT_SIZE as usize
                     + ECDSA_SIG_SIZE as usize
                     + 1
-                    + u32::BITS as usize / 8
+                    + U32_SIZE
                     + SHA256_OUT_SIZE as usize
-                    + u32::BITS as usize / 8],
-            expected_serialised_data[u32::BITS as usize / 8
+                    + U32_SIZE],
+            expected_serialised_data[U32_SIZE
                 + 1
                 + SHA256_OUT_SIZE as usize
-                + u32::BITS as usize / 8
+                + U32_SIZE
                 + SHA256_OUT_SIZE as usize
                 + ECDSA_SIG_SIZE as usize
-                ..u32::BITS as usize / 8
+                ..U32_SIZE
                     + 1
                     + SHA256_OUT_SIZE as usize
-                    + u32::BITS as usize / 8
+                    + U32_SIZE
                     + SHA256_OUT_SIZE as usize
                     + ECDSA_SIG_SIZE as usize
                     + 1
-                    + u32::BITS as usize / 8
+                    + U32_SIZE
                     + SHA256_OUT_SIZE as usize
-                    + u32::BITS as usize / 8]
+                    + U32_SIZE]
         );
         // Portion after the second input signature
         assert_eq!(
-            signed_transaction_data[u32::BITS as usize / 8
+            signed_transaction_data[U32_SIZE
                 + 1
                 + SHA256_OUT_SIZE as usize  // start of input one
-                + u32::BITS as usize / 8
+                + U32_SIZE
                 + SHA256_OUT_SIZE as usize
                 + ECDSA_SIG_SIZE as usize
                 + 1
-                + u32::BITS as usize / 8
+                + U32_SIZE
                 + SHA256_OUT_SIZE as usize  // start of input two
-                + u32::BITS as usize / 8
+                + U32_SIZE
                 + SHA256_OUT_SIZE as usize
                 + ECDSA_SIG_SIZE as usize..],
-            expected_serialised_data[u32::BITS as usize / 8
+            expected_serialised_data[U32_SIZE
                 + 1
                 + SHA256_OUT_SIZE as usize
-                + u32::BITS as usize / 8
+                + U32_SIZE
                 + SHA256_OUT_SIZE as usize
                 + ECDSA_SIG_SIZE as usize
                 + 1
-                + u32::BITS as usize / 8
+                + U32_SIZE
                 + SHA256_OUT_SIZE as usize
-                + u32::BITS as usize / 8
+                + U32_SIZE
                 + SHA256_OUT_SIZE as usize
                 + ECDSA_SIG_SIZE as usize..]
         );
@@ -784,12 +756,12 @@ mod tests {
             / 8
             + 1
             + SHA256_OUT_SIZE as usize
-            + u32::BITS as usize / 8
+            + U32_SIZE
             + SHA256_OUT_SIZE as usize
-            ..u32::BITS as usize / 8
+            ..U32_SIZE
                 + 1
                 + SHA256_OUT_SIZE as usize
-                + u32::BITS as usize / 8
+                + U32_SIZE
                 + SHA256_OUT_SIZE as usize
                 + ECDSA_SIG_SIZE as usize];
         let res = pub_key.verify(
@@ -801,24 +773,24 @@ mod tests {
             / 8
             + 1
             + SHA256_OUT_SIZE as usize
-            + u32::BITS as usize / 8
+            + U32_SIZE
             + SHA256_OUT_SIZE as usize
             + ECDSA_SIG_SIZE as usize
             + 1
-            + u32::BITS as usize / 8
+            + U32_SIZE
             + SHA256_OUT_SIZE as usize
-            + u32::BITS as usize / 8
+            + U32_SIZE
             + SHA256_OUT_SIZE as usize
-            ..u32::BITS as usize / 8
+            ..U32_SIZE
                 + 1
                 + SHA256_OUT_SIZE as usize
-                + u32::BITS as usize / 8
+                + U32_SIZE
                 + SHA256_OUT_SIZE as usize
                 + ECDSA_SIG_SIZE as usize
                 + 1
-                + u32::BITS as usize / 8
+                + U32_SIZE
                 + SHA256_OUT_SIZE as usize
-                + u32::BITS as usize / 8
+                + U32_SIZE
                 + SHA256_OUT_SIZE as usize
                 + ECDSA_SIG_SIZE as usize];
         let res = pub_key.verify(
