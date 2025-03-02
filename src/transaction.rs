@@ -4,6 +4,7 @@ const TRANSACTION_ID_SIZE: u8 = 32;
 const SERIALISED_INPUT_SIZE: u8 =
     TRANSACTION_ID_SIZE + 4 + SHA256_OUT_SIZE + ECDSA_SIG_SIZE + 1 + 4;
 const U32_SIZE: usize = u32::BITS as usize / 8;
+const U64_SIZE: usize = u64::BITS as usize / 8;
 
 /// Transaction input
 ///
@@ -74,9 +75,9 @@ impl Output {
 
 impl Output {
     fn serialise(&self) -> Vec<u8> {
-        let mut data = vec![0; u64::BITS as usize / 8 + SHA256_OUT_SIZE as usize];
-        data[..u64::BITS as usize / 8].copy_from_slice(&self.amount.to_le_bytes());
-        data[u64::BITS as usize / 8..].copy_from_slice(&self.script_pub_key);
+        let mut data = vec![0; U64_SIZE + SHA256_OUT_SIZE as usize];
+        data[..U64_SIZE].copy_from_slice(&self.amount.to_le_bytes());
+        data[U64_SIZE..].copy_from_slice(&self.script_pub_key);
         data
     }
 }
@@ -175,7 +176,7 @@ impl Transaction {
                 + 1
                 + SERIALISED_INPUT_SIZE as usize * self.inputs.len()
                 + 1
-                + u64::BITS as usize / 8
+                + U64_SIZE
                 + SHA256_OUT_SIZE as usize
                 + U32_SIZE
         ];
@@ -216,6 +217,7 @@ impl Transaction {
 mod tests {
     use super::{
         Input, Output, SigHashType, Transaction, ECDSA_SIG_SIZE, SHA256_OUT_SIZE, U32_SIZE,
+        U64_SIZE,
     };
     use ring::{
         rand,
@@ -385,7 +387,7 @@ mod tests {
             + 1
             + U32_SIZE
             + 1
-            + u64::BITS as usize / 8
+            + U64_SIZE
             + SHA256_OUT_SIZE as usize
             + U32_SIZE];
         expected_serialised_data[..U32_SIZE].copy_from_slice(&transaction.version.to_le_bytes());
@@ -618,7 +620,7 @@ mod tests {
             + 1
             + U32_SIZE
             + 1                         // start of outputs
-            + u64::BITS as usize / 8
+            + U64_SIZE
             + SHA256_OUT_SIZE as usize
             + U32_SIZE];
         expected_serialised_data[..U32_SIZE].copy_from_slice(&transaction.version.to_le_bytes());
