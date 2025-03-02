@@ -1,6 +1,8 @@
 const SHA256_OUT_SIZE: u8 = 32;
 const ECDSA_SIG_SIZE: u8 = 64;
 const TRANSACTION_ID_SIZE: u8 = 32;
+const SERIALISED_INPUT_SIZE: u8 =
+    TRANSACTION_ID_SIZE + 4 + SHA256_OUT_SIZE + ECDSA_SIG_SIZE + 1 + 4;
 
 /// Transaction input
 ///
@@ -127,40 +129,40 @@ impl Transaction {
         &mut self,
         output_pub_key_hashes: Vec<Vec<u8>>,
     ) -> impl Iterator<Item = Vec<u8>> + '_ {
-        for (input, referenced_output) in
-            std::iter::zip(self.inputs.iter_mut(), output_pub_key_hashes.into_iter())
-        {
-            input.script_sig = referenced_output;
-        }
+        std::iter::zip(self.inputs.iter(), output_pub_key_hashes).map(
+            |(input, mut referenced_output)| {
+                let mut input_with_placeholder_script_sig = input.clone();
+                input_with_placeholder_script_sig
+                    .script_sig
+                    .append(&mut referenced_output);
 
-        self.inputs.iter().map(|input| {
-            let mut input_with_placeholder_script_sig = input.clone();
-            input_with_placeholder_script_sig
-                .script_sig
-                .clone_from(&input.script_sig.to_vec());
+                let mut unsigned_transaction_serialised = Vec::new();
+                unsigned_transaction_serialised
+                    .append(&mut u32::to_le_bytes(self.version).to_vec());
+                unsigned_transaction_serialised.push(self.inputs.len() as u8);
+                unsigned_transaction_serialised
+                    .append(&mut input_with_placeholder_script_sig.serialise());
+                unsigned_transaction_serialised.push(self.outputs.len() as u8);
+                unsigned_transaction_serialised.append(&mut self.outputs[0].serialise());
+                unsigned_transaction_serialised
+                    .append(&mut u32::to_le_bytes(self.locktime).to_vec());
+                unsigned_transaction_serialised
+                    .append(&mut self.sig_hash_type.serialise_for_transaction().to_vec());
 
-            let mut unsigned_transaction_serialised = Vec::new();
-            unsigned_transaction_serialised.append(&mut u32::to_le_bytes(self.version).to_vec());
-            unsigned_transaction_serialised.push(self.inputs.len() as u8);
-            unsigned_transaction_serialised
-                .append(&mut input_with_placeholder_script_sig.serialise());
-            unsigned_transaction_serialised.push(self.outputs.len() as u8);
-            unsigned_transaction_serialised.append(&mut self.outputs[0].serialise());
-            unsigned_transaction_serialised.append(&mut u32::to_le_bytes(self.locktime).to_vec());
-            unsigned_transaction_serialised
-                .append(&mut self.sig_hash_type.serialise_for_transaction().to_vec());
-
-            ring::digest::digest(&ring::digest::SHA256, &unsigned_transaction_serialised)
-                .as_ref()
-                .to_vec()
-        })
+                ring::digest::digest(&ring::digest::SHA256, &unsigned_transaction_serialised)
+                    .as_ref()
+                    .to_vec()
+            },
+        )
     }
 
     /// Provide signatures to unlock all inputs
-    fn sign(&mut self, signatures: Vec<Vec<u8>>) {
-        for (input, signature) in std::iter::zip(self.inputs.iter_mut(), signatures.into_iter()) {
+    fn sign(&mut self, signatures: Vec<Vec<u8>>, referenced_outputs: &[Vec<u8>]) {
+        for ((input, signature), referenced_output) in
+            std::iter::zip(self.inputs.iter_mut(), signatures.into_iter()).zip(referenced_outputs)
+        {
             let mut new_script_sig = [0; SHA256_OUT_SIZE as usize + ECDSA_SIG_SIZE as usize + 1];
-            new_script_sig[..SHA256_OUT_SIZE as usize].copy_from_slice(&input.script_sig);
+            new_script_sig[..SHA256_OUT_SIZE as usize].copy_from_slice(referenced_output);
             new_script_sig
                 [SHA256_OUT_SIZE as usize..SHA256_OUT_SIZE as usize + ECDSA_SIG_SIZE as usize]
                 .copy_from_slice(signature.as_ref());
@@ -175,12 +177,7 @@ impl Transaction {
             0;
             u32::BITS as usize / 8
                 + 1
-                + SHA256_OUT_SIZE as usize
-                + u32::BITS as usize / 8
-                + SHA256_OUT_SIZE as usize
-                + ECDSA_SIG_SIZE as usize
-                + 1
-                + u32::BITS as usize / 8
+                + SERIALISED_INPUT_SIZE as usize * self.inputs.len()
                 + 1
                 + u64::BITS as usize / 8
                 + SHA256_OUT_SIZE as usize
@@ -188,22 +185,30 @@ impl Transaction {
         ];
         data[..u32::BITS as usize / 8].copy_from_slice(&self.version.to_le_bytes());
         data[u32::BITS as usize / 8] = self.inputs.len() as u8;
-        let serialised_signed_input = self.inputs[0].serialise();
-        data[u32::BITS as usize / 8 + 1
-            ..u32::BITS as usize / 8 + 1 + serialised_signed_input.len()]
-            .copy_from_slice(&serialised_signed_input);
-        data[u32::BITS as usize / 8 + 1 + serialised_signed_input.len()] = self.outputs.len() as u8;
+
+        for (idx, input) in self.inputs.iter().enumerate() {
+            let serialised_signed_input = input.serialise();
+            data[u32::BITS as usize / 8 + 1 + idx * SERIALISED_INPUT_SIZE as usize
+                ..u32::BITS as usize / 8
+                    + 1
+                    + idx * SERIALISED_INPUT_SIZE as usize
+                    + serialised_signed_input.len()]
+                .copy_from_slice(&serialised_signed_input);
+        }
+
+        data[u32::BITS as usize / 8 + 1 + SERIALISED_INPUT_SIZE as usize * self.inputs.len()] =
+            self.outputs.len() as u8;
         let serialised_output = self.outputs[0].serialise();
-        data[u32::BITS as usize / 8 + 1 + serialised_signed_input.len() + 1
+        data[u32::BITS as usize / 8 + 1 + SERIALISED_INPUT_SIZE as usize * self.inputs.len() + 1
             ..u32::BITS as usize / 8
                 + 1
-                + serialised_signed_input.len()
+                + SERIALISED_INPUT_SIZE as usize * self.inputs.len()
                 + 1
                 + serialised_output.len()]
             .copy_from_slice(&serialised_output);
         data[u32::BITS as usize / 8
             + 1
-            + serialised_signed_input.len()
+            + SERIALISED_INPUT_SIZE as usize * self.inputs.len()
             + 1
             + serialised_output.len()..]
             .copy_from_slice(&u32::to_le_bytes(self.locktime));
@@ -426,7 +431,7 @@ mod tests {
                 key_pair.sign(&rng, &data).unwrap().as_ref().to_vec()
             })
             .collect::<Vec<_>>();
-        transaction.sign(input_signatures);
+        transaction.sign(input_signatures, &referenced_outputs);
         let signed_transaction_data = transaction.serialise();
 
         // Can't directly compare `signed_transaction_data` and `expected_serialised_data` due to
@@ -484,6 +489,342 @@ mod tests {
             key_pair.public_key().as_ref(),
         );
         let res = pub_key.verify(&input_data_being_signed, sig_in_serialised_transaction);
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn sign_transaction_with_two_inputs_one_output() {
+        let amount = 123;
+        let script_pub_key_hash = (0..32).collect::<Vec<_>>();
+        let outputs = vec![Output {
+            amount,
+            script_pub_key: script_pub_key_hash.clone(),
+        }];
+
+        let input_one_txid = (0..32).collect::<Vec<_>>();
+        let input_one_output_index = 1;
+        let input_two_txid = (1..33).collect::<Vec<_>>();
+        let input_two_output_index = 0;
+        let sequence = 0xFDFFFFFF;
+        let mut inputs = vec![
+            Input {
+                transaction_id: input_one_txid.clone(),
+                output_index: input_one_output_index,
+                script_sig: Vec::new(),
+                sequence,
+            },
+            Input {
+                transaction_id: input_two_txid.clone(),
+                output_index: input_two_output_index,
+                script_sig: Vec::new(),
+                sequence,
+            },
+        ];
+
+        let version = 1;
+        let locktime = 0;
+        let sig_hash_type = SigHashType::All;
+        let mut transaction = Transaction {
+            version,
+            inputs: inputs.clone(),
+            outputs: outputs.clone(),
+            locktime,
+            sig_hash_type,
+        };
+
+        let input_one_referenced_script_pub_key_hash = (2..34).collect::<Vec<_>>();
+        let mut input_one_with_placeholder_script_sig = inputs[0].clone();
+        input_one_with_placeholder_script_sig
+            .script_sig
+            .clone_from(&input_one_referenced_script_pub_key_hash);
+        let input_two_referenced_script_pub_key_hash = (5..37).collect::<Vec<_>>();
+        let mut input_two_with_placeholder_script_sig = inputs[1].clone();
+        input_two_with_placeholder_script_sig
+            .script_sig
+            .clone_from(&input_two_referenced_script_pub_key_hash);
+
+        // Generate ECDSA keypair
+        let rng = rand::SystemRandom::new();
+        let ecdsa_bytes =
+            signature::EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
+                .unwrap();
+        let key_pair = signature::EcdsaKeyPair::from_pkcs8(
+            &ECDSA_P256_SHA256_FIXED_SIGNING,
+            ecdsa_bytes.as_ref(),
+            &rng,
+        )
+        .unwrap();
+
+        // Form serialised version of final signed transaction
+
+        // To create a signature for the first input, form serialised version of transaction with:
+        // - placeholder script sig for input one
+        // - empty script sig for input two
+        let mut unsigned_transaction_serialised_for_input_one = Vec::new();
+        unsigned_transaction_serialised_for_input_one
+            .append(&mut u32::to_le_bytes(version).to_vec());
+        unsigned_transaction_serialised_for_input_one.push(transaction.inputs.len() as u8);
+        unsigned_transaction_serialised_for_input_one
+            .append(&mut input_one_with_placeholder_script_sig.serialise());
+        unsigned_transaction_serialised_for_input_one.append(&mut inputs[1].serialise());
+        unsigned_transaction_serialised_for_input_one.push(transaction.outputs.len() as u8);
+        unsigned_transaction_serialised_for_input_one.append(&mut outputs[0].serialise());
+        unsigned_transaction_serialised_for_input_one
+            .append(&mut u32::to_le_bytes(locktime).to_vec());
+        unsigned_transaction_serialised_for_input_one
+            .append(&mut sig_hash_type.serialise_for_transaction().to_vec());
+        let sha256_hash = ring::digest::digest(
+            &ring::digest::SHA256,
+            &unsigned_transaction_serialised_for_input_one,
+        );
+        let input_one_sig = key_pair.sign(&rng, sha256_hash.as_ref()).unwrap();
+        let mut input_one_script_sig = [0; SHA256_OUT_SIZE as usize + ECDSA_SIG_SIZE as usize + 1];
+        input_one_script_sig[..SHA256_OUT_SIZE as usize]
+            .copy_from_slice(&input_one_referenced_script_pub_key_hash);
+        input_one_script_sig
+            [SHA256_OUT_SIZE as usize..SHA256_OUT_SIZE as usize + ECDSA_SIG_SIZE as usize]
+            .copy_from_slice(input_one_sig.as_ref());
+        input_one_script_sig[input_one_script_sig.len() - 1] =
+            transaction.sig_hash_type.serialise_for_signature();
+        inputs[0].script_sig = input_one_script_sig.to_vec();
+
+        // To create a signature for the second input, form serialised version of transaction with:
+        // - empty script sig for input one
+        // - placeholder script sig for input two
+        let mut unsigned_transaction_serialised_for_input_two = Vec::new();
+        unsigned_transaction_serialised_for_input_two
+            .append(&mut u32::to_le_bytes(version).to_vec());
+        unsigned_transaction_serialised_for_input_two.push(transaction.inputs.len() as u8);
+        unsigned_transaction_serialised_for_input_two.append(&mut inputs[0].serialise());
+        unsigned_transaction_serialised_for_input_two
+            .append(&mut input_two_with_placeholder_script_sig.serialise());
+        unsigned_transaction_serialised_for_input_two.push(transaction.outputs.len() as u8);
+        unsigned_transaction_serialised_for_input_two.append(&mut outputs[0].serialise());
+        unsigned_transaction_serialised_for_input_two
+            .append(&mut u32::to_le_bytes(locktime).to_vec());
+        unsigned_transaction_serialised_for_input_two
+            .append(&mut sig_hash_type.serialise_for_transaction().to_vec());
+        let sha256_hash = ring::digest::digest(
+            &ring::digest::SHA256,
+            &unsigned_transaction_serialised_for_input_two,
+        );
+        let input_two_sig = key_pair.sign(&rng, sha256_hash.as_ref()).unwrap();
+        let mut input_two_script_sig = [0; SHA256_OUT_SIZE as usize + ECDSA_SIG_SIZE as usize + 1];
+        input_two_script_sig[..SHA256_OUT_SIZE as usize]
+            .copy_from_slice(&input_two_referenced_script_pub_key_hash);
+        input_two_script_sig
+            [SHA256_OUT_SIZE as usize..SHA256_OUT_SIZE as usize + ECDSA_SIG_SIZE as usize]
+            .copy_from_slice(input_two_sig.as_ref());
+        input_two_script_sig[input_two_script_sig.len() - 1] =
+            transaction.sig_hash_type.serialise_for_signature();
+        inputs[1].script_sig = input_two_script_sig.to_vec();
+
+        // Form expected serialised transaction data with both signed inputs
+        let mut expected_serialised_data = [0; u32::BITS as usize / 8
+            + 1                         // start of inputs
+            + SHA256_OUT_SIZE as usize  // start of input one
+            + u32::BITS as usize / 8
+            + SHA256_OUT_SIZE as usize  // start of input one sig
+            + ECDSA_SIG_SIZE as usize
+            + 1
+            + u32::BITS as usize / 8
+            + SHA256_OUT_SIZE as usize  // start of input two
+            + u32::BITS as usize / 8
+            + SHA256_OUT_SIZE as usize  // start of input two sig
+            + ECDSA_SIG_SIZE as usize
+            + 1
+            + u32::BITS as usize / 8
+            + 1                         // start of outputs
+            + u64::BITS as usize / 8
+            + SHA256_OUT_SIZE as usize
+            + u32::BITS as usize / 8];
+        expected_serialised_data[..u32::BITS as usize / 8]
+            .copy_from_slice(&transaction.version.to_le_bytes());
+        expected_serialised_data[u32::BITS as usize / 8] = inputs.len() as u8;
+        let serialised_signed_input_one = inputs[0].serialise();
+        expected_serialised_data[u32::BITS as usize / 8 + 1
+            ..u32::BITS as usize / 8 + 1 + serialised_signed_input_one.len()]
+            .copy_from_slice(&serialised_signed_input_one);
+        let serialised_signed_input_two = inputs[1].serialise();
+        expected_serialised_data[u32::BITS as usize / 8 + 1 + serialised_signed_input_one.len()
+            ..u32::BITS as usize / 8
+                + 1
+                + serialised_signed_input_one.len()
+                + serialised_signed_input_two.len()]
+            .copy_from_slice(&serialised_signed_input_two);
+        expected_serialised_data[u32::BITS as usize / 8
+            + 1
+            + serialised_signed_input_one.len()
+            + serialised_signed_input_two.len()] = outputs.len() as u8;
+        let serialised_output = outputs[0].serialise();
+        expected_serialised_data[u32::BITS as usize / 8
+            + 1
+            + serialised_signed_input_one.len()
+            + serialised_signed_input_two.len()
+            + 1
+            ..u32::BITS as usize / 8
+                + 1
+                + serialised_signed_input_one.len()
+                + serialised_signed_input_two.len()
+                + 1
+                + serialised_output.len()]
+            .copy_from_slice(&serialised_output);
+        expected_serialised_data[u32::BITS as usize / 8
+            + 1
+            + serialised_signed_input_one.len()
+            + serialised_signed_input_two.len()
+            + 1
+            + serialised_output.len()..]
+            .copy_from_slice(&u32::to_le_bytes(locktime));
+
+        // Sign transaction by signing both inputs
+        let referenced_outputs = [
+            input_one_referenced_script_pub_key_hash,
+            input_two_referenced_script_pub_key_hash,
+        ];
+        let mut input_data_being_signed = Vec::new();
+        let input_signatures = transaction
+            .inputs_for_signing(referenced_outputs.to_vec())
+            .map(|data| {
+                // Store for later use when asserting that the signatures can be successfully
+                // verified
+                input_data_being_signed.push(data.clone());
+                key_pair.sign(&rng, &data).unwrap().as_ref().to_vec()
+            })
+            .collect::<Vec<_>>();
+        transaction.sign(input_signatures, &referenced_outputs);
+        let signed_transaction_data = transaction.serialise();
+
+        // Assert equality of the parts of `signed_transaction_data` and `expected_serialised_data`
+        // that aren't the signatures
+
+        // Portion before the first input signature
+        assert_eq!(
+            signed_transaction_data[..u32::BITS as usize / 8
+                + 1
+                + SHA256_OUT_SIZE as usize
+                + u32::BITS as usize / 8
+                + SHA256_OUT_SIZE as usize],
+            expected_serialised_data[..u32::BITS as usize / 8
+                + 1
+                + SHA256_OUT_SIZE as usize
+                + u32::BITS as usize / 8
+                + SHA256_OUT_SIZE as usize]
+        );
+        // Portion after the first input signature but before the second input signature
+        assert_eq!(
+            signed_transaction_data[u32::BITS as usize / 8
+                + 1
+                + SHA256_OUT_SIZE as usize
+                + u32::BITS as usize / 8
+                + SHA256_OUT_SIZE as usize
+                + ECDSA_SIG_SIZE as usize
+                ..u32::BITS as usize / 8
+                    + 1
+                    + SHA256_OUT_SIZE as usize
+                    + u32::BITS as usize / 8
+                    + SHA256_OUT_SIZE as usize
+                    + ECDSA_SIG_SIZE as usize
+                    + 1
+                    + u32::BITS as usize / 8
+                    + SHA256_OUT_SIZE as usize
+                    + u32::BITS as usize / 8],
+            expected_serialised_data[u32::BITS as usize / 8
+                + 1
+                + SHA256_OUT_SIZE as usize
+                + u32::BITS as usize / 8
+                + SHA256_OUT_SIZE as usize
+                + ECDSA_SIG_SIZE as usize
+                ..u32::BITS as usize / 8
+                    + 1
+                    + SHA256_OUT_SIZE as usize
+                    + u32::BITS as usize / 8
+                    + SHA256_OUT_SIZE as usize
+                    + ECDSA_SIG_SIZE as usize
+                    + 1
+                    + u32::BITS as usize / 8
+                    + SHA256_OUT_SIZE as usize
+                    + u32::BITS as usize / 8]
+        );
+        // Portion after the second input signature
+        assert_eq!(
+            signed_transaction_data[u32::BITS as usize / 8
+                + 1
+                + SHA256_OUT_SIZE as usize  // start of input one
+                + u32::BITS as usize / 8
+                + SHA256_OUT_SIZE as usize
+                + ECDSA_SIG_SIZE as usize
+                + 1
+                + u32::BITS as usize / 8
+                + SHA256_OUT_SIZE as usize  // start of input two
+                + u32::BITS as usize / 8
+                + SHA256_OUT_SIZE as usize
+                + ECDSA_SIG_SIZE as usize..],
+            expected_serialised_data[u32::BITS as usize / 8
+                + 1
+                + SHA256_OUT_SIZE as usize
+                + u32::BITS as usize / 8
+                + SHA256_OUT_SIZE as usize
+                + ECDSA_SIG_SIZE as usize
+                + 1
+                + u32::BITS as usize / 8
+                + SHA256_OUT_SIZE as usize
+                + u32::BITS as usize / 8
+                + SHA256_OUT_SIZE as usize
+                + ECDSA_SIG_SIZE as usize..]
+        );
+
+        // Check that the signature portions in `signed_transaction_data` are successfully verified
+        // with the public key that was used to sign the transaction data
+        let pub_key = signature::UnparsedPublicKey::new(
+            &ECDSA_P256_SHA256_FIXED,
+            key_pair.public_key().as_ref(),
+        );
+        let input_one_sig_in_serialised_transaction = &signed_transaction_data[u32::BITS as usize
+            / 8
+            + 1
+            + SHA256_OUT_SIZE as usize
+            + u32::BITS as usize / 8
+            + SHA256_OUT_SIZE as usize
+            ..u32::BITS as usize / 8
+                + 1
+                + SHA256_OUT_SIZE as usize
+                + u32::BITS as usize / 8
+                + SHA256_OUT_SIZE as usize
+                + ECDSA_SIG_SIZE as usize];
+        let res = pub_key.verify(
+            &input_data_being_signed[0],
+            input_one_sig_in_serialised_transaction,
+        );
+        assert!(res.is_ok());
+        let input_two_sig_in_serialised_transaction = &signed_transaction_data[u32::BITS as usize
+            / 8
+            + 1
+            + SHA256_OUT_SIZE as usize
+            + u32::BITS as usize / 8
+            + SHA256_OUT_SIZE as usize
+            + ECDSA_SIG_SIZE as usize
+            + 1
+            + u32::BITS as usize / 8
+            + SHA256_OUT_SIZE as usize
+            + u32::BITS as usize / 8
+            + SHA256_OUT_SIZE as usize
+            ..u32::BITS as usize / 8
+                + 1
+                + SHA256_OUT_SIZE as usize
+                + u32::BITS as usize / 8
+                + SHA256_OUT_SIZE as usize
+                + ECDSA_SIG_SIZE as usize
+                + 1
+                + u32::BITS as usize / 8
+                + SHA256_OUT_SIZE as usize
+                + u32::BITS as usize / 8
+                + SHA256_OUT_SIZE as usize
+                + ECDSA_SIG_SIZE as usize];
+        let res = pub_key.verify(
+            &input_data_being_signed[1],
+            input_two_sig_in_serialised_transaction,
+        );
         assert!(res.is_ok());
     }
 }
